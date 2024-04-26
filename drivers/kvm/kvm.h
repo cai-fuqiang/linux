@@ -43,7 +43,16 @@
 	(CR0_PG_MASK | CR0_PE_MASK | CR0_WP_MASK | CR0_NE_MASK)
 #define KVM_GUEST_CR4_MASK \
 	(CR4_PSE_MASK | CR4_PAE_MASK | CR4_PGE_MASK | CR4_VMXE_MASK | CR4_VME_MASK)
+
+/* 
+ * this marco This macro indicates the bit that must be enabled in R/P MODE
+ * CR4. It can be seen that there is PAE
+ */
 #define KVM_PMODE_VM_CR4_ALWAYS_ON (CR4_VMXE_MASK | CR4_PAE_MASK)
+/*
+ * Always set CR4_VME_MASK means that it will use virtual-8086 emulate guest
+ * rmode
+ */
 #define KVM_RMODE_VM_CR4_ALWAYS_ON (CR4_VMXE_MASK | CR4_PAE_MASK | CR4_VME_MASK)
 
 #define INVALID_PAGE (~(hpa_t)0)

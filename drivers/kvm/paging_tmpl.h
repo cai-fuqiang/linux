@@ -148,6 +148,24 @@ static pt_element_t *FNAME(fetch_guest)(struct kvm_vcpu *vcpu,
 /*
  * Fetch a shadow pte for a specific level in the paging hierarchy.
  */
+/*
+ * We need to know, what information to abtain for walking guest 
+ * pgtable ?
+ *
+ * The pgtable attr! The next level pt or page phyiscal address is not 
+ * key information. So we can found that in paging32_fetch, the
+ * shadow_root_level is PT32E_ROOT_LEVEL, root_level is PT32_ROOT_LEVEL.
+ * shadow_root_level is ONE greater that root_level.
+ *
+ * We just need to make the attr of level 2 && 3  shadow pgtable consistent 
+ * with the level2 of the guest pgtable.
+ *
+ * > NOTE
+ * > 
+ * > No matter what mode the guest is in except 64-bit mode, guest cr4 will 
+ * > set PAE. So the shadow_root_level is always PT32E_ROOT_LEVEL except 
+ * > 64-bit mode.
+ */
 static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			      struct guest_walker *walker)
 {
@@ -159,6 +177,10 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 	level = vcpu->mmu.shadow_root_level;
 
 	for (; ; level--) {
+		/*
+		 * Whether it is paging32_fetch or paging64_fetch, SHADOW_PT_INDEX
+		 * is all PT64_INDEX.
+		 */
 		u32 index = SHADOW_PT_INDEX(addr, level);
 		u64 *shadow_ent = ((u64 *)__va(shadow_addr)) + index;
 		pt_element_t *guest_ent;
@@ -170,7 +192,16 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			prev_shadow_ent = shadow_ent;
 			continue;
 		}
-
+		/*
+		 * see paging32_init_context()
+		 * it will set 
+		 *
+		 *   context::shadow_root_level --> PT32E_ROOT_LEVEL
+		 *   context->root_level        --> PT32_ROOT_LEVEL
+		 *
+		 * So when we set level 3 && 2 shadow pgtable, we all
+		 * fetch guest level 2 pgtable.
+		 */
 		if (PTTYPE == 32 && level > PT32_ROOT_LEVEL) {
 			ASSERT(level == PT32E_ROOT_LEVEL);
 			guest_ent = FNAME(fetch_guest)(vcpu, walker,
@@ -183,11 +214,29 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			return NULL;
 
 		/* Don't set accessed bit on PAE PDPTRs */
+		/*
+		 * PAE PDPTE have not ACCESSED bit.
+		 *
+		 * "root_level" not equal to 3 means guest does not enable PAE.
+		 *
+		 * "root_level == 3 && walker->level !=3" means guest enable PAE,
+		 * but the level is not PDPTE.
+		 */
 		if (vcpu->mmu.root_level != 3 || walker->level != 3)
 			*guest_ent |= PT_ACCESSED_MASK;
 
+		/*
+		 * Already walked to the last level shadow pgtable -- 
+		 *   PT_PAGE_TABLE_LEVEL
+		 */
 		if (level == PT_PAGE_TABLE_LEVEL) {
-
+			/* 
+			 * Although when we called fetch_guest() earlier, the level passed 
+			 * in was PT_PAGE_TABLE_LEVEL, it may be cause early return due to
+			 * PT_DIRECTORY_LEVEL pgtable entry having PT_PAGE_SIZE_MASK. 
+			 *
+			 * In this case, walker->level is 2.
+			 */
 			if (walker->level == PT_DIRECTORY_LEVEL) {
 				if (prev_shadow_ent)
 					*prev_shadow_ent |= PT_SHADOW_PS_MARK;
