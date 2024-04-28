@@ -167,6 +167,7 @@ static void kvm_mmu_free_page(struct kvm_vcpu *vcpu, hpa_t page_hpa)
 {
 	struct kvm_mmu_page *page_head = page_header(page_hpa);
 
+	//delete from active_mmu_pages, add to vcpu->free_pages
 	list_del(&page_head->link);
 	page_head->page_hpa = page_hpa;
 	list_add(&page_head->link, &vcpu->free_pages);
@@ -189,9 +190,10 @@ static hpa_t kvm_mmu_alloc_page(struct kvm_vcpu *vcpu, u64 *parent_pte)
 
 	if (list_empty(&vcpu->free_pages))
 		return INVALID_PAGE;
-
+	//get from `vcpu->free_pages.next`
 	page = list_entry(vcpu->free_pages.next, struct kvm_mmu_page, link);
 	list_del(&page->link);
+	//add to active_mmu_pages
 	list_add(&page->link, &vcpu->kvm->active_mmu_pages);
 	ASSERT(is_empty_shadow_page(page->page_hpa));
 	page->slot_bitmap = 0;
@@ -205,6 +207,7 @@ static void page_header_update_slot(struct kvm *kvm, void *pte, gpa_t gpa)
 	int slot = memslot_id(kvm, gfn_to_memslot(kvm, gpa >> PAGE_SHIFT));
 	struct kvm_mmu_page *page_head = page_header(__pa(pte));
 
+	//update kvm_mmu_page->slot_bitmap
 	__set_bit(slot, &page_head->slot_bitmap);
 }
 
@@ -238,7 +241,9 @@ hpa_t gva_to_hpa(struct kvm_vcpu *vcpu, gva_t gva)
 	return gpa_to_hpa(vcpu, gpa);
 }
 
-
+/*
+ * release this pgtable, and next level pgtable
+ */
 static void release_pt_page_64(struct kvm_vcpu *vcpu, hpa_t page_hpa,
 			       int level)
 {
@@ -429,10 +434,33 @@ static inline void set_pte_common(struct kvm_vcpu *vcpu,
 {
 	hpa_t paddr;
 
+	/*
+	 * if guest pte have not dirty flags, we need to notify guest when
+	 * guest write the page pointed by shadow pte. So we just unmask
+	 * PT_WRITABLE_MASK, let trap kvm when guest write this page.
+	 *
+	 * But the writable bit of original guest pgtable entries seems to 
+	 * loss in above ways. So kvm use some reserved bit in pgtale like [11:9],
+	 * to store the shadow page table bit.
+	 *
+	 * And a another bit is accessed bit. this bit is always set in `FNAME(fetch)`
+	 * except PDPTE in 32 bit mode. See annotation in `FNAME(fetch)`
+	 *
+	 * Another situation, if guest modify guest pgtable entry to unmask 
+	 * accessible/dirty bit. It seems that the host cannot to be notified. Yes, it
+	 * is. But kvm mmu page is like TLBs, guest will access stale kvm mmu pgtable if
+	 * it not initiate tlb flush. Once the guest initiates a tlb flush, kvm will 
+	 * capture it and invalidate related shadow pgtable entries or the whole shadow 
+	 * page.
+	 */
 	*shadow_pte |= access_bits << PT_SHADOW_BITS_OFFSET;
 	if (!dirty)
 		access_bits &= ~PT_WRITABLE_MASK;
 
+	/*
+	 * if access_bits has PT_WRITABLE_MASK bits, means guest pgtable entry
+	 * mask dirty flag already, so  we mask the page dirty in memslot->dirty_bitmap
+	 */
 	if (access_bits & PT_WRITABLE_MASK)
 		mark_page_dirty(vcpu->kvm, gaddr >> PAGE_SHIFT);
 
@@ -440,12 +468,26 @@ static inline void set_pte_common(struct kvm_vcpu *vcpu,
 
 	paddr = gpa_to_hpa(vcpu, gaddr & PT64_BASE_ADDR_MASK);
 
+	/* 
+	 * If guest pte has not  global mask, mask page table is not global
+	 * This is a simple and crude approach. If a page table have only one 
+	 * entry that is not GLOBAL, the whole mmu page is mark to noglobal.
+	 *
+	 * When execute kvm_mmu_flush_tlb emulating switch to CR3, it will 
+	 * release this noglobal page table.
+	 */
 	if (!(*shadow_pte & PT_GLOBAL_MASK))
 		mark_pagetable_nonglobal(shadow_pte);
 
 	if (is_error_hpa(paddr)) {
+		/*
+		 * error hpa means there is no memslot associated with this address,
+		 * so this is a MMIO access. See `gpa_to_hpa` for more information.
+		 */
 		*shadow_pte |= gaddr;
+		/* PT_SHADOW_IO_MARK is alse use reserved bit of shadow pgtable entry*/
 		*shadow_pte |= PT_SHADOW_IO_MARK;
+		/* umask present bit */
 		*shadow_pte &= ~PT_PRESENT_MASK;
 	} else {
 		*shadow_pte |= paddr;

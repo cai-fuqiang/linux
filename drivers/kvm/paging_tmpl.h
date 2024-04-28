@@ -53,9 +53,23 @@
  * table walker.
  */
 struct guest_walker {
-	int level;
-	pt_element_t *table;
-	pt_element_t inherited_ar;
+	int level;			//the CURRENT level of guest walker
+	pt_element_t *table;		//the pgtable of the level, and mask some 
+					//guest bit of CR3_FLAGS_MASK 
+
+	pt_element_t inherited_ar;	/* see intel sdm 4.10.2.2 "Caching Translations 
+					 * in TLBs", inherited_ar like certain permission 
+					 * attributes in TLBs entries, calculated by all 
+					 * level pgtable entries to execute logical-AND/OR.
+					 * 
+					 * why we only need to  pay attention to R/W && U/S
+					 * flags(see FNAME(init_walker) for more information)
+					 * because we need to use these bits during the page 
+					 * fault to handle page faults reasonably.(see 
+					 * FNAME(page_fault) for more information. Saving this 
+					 * information will prevent us from walking the guest
+					 * page table again.
+					 */
 };
 
 static void FNAME(init_walker)(struct guest_walker *walker,
@@ -63,7 +77,10 @@ static void FNAME(init_walker)(struct guest_walker *walker,
 {
 	hpa_t hpa;
 	struct kvm_memory_slot *slot;
-
+	/*
+	 * set walker->level to vcpu->mmu.root_level initialized in 
+	 * FNAME(init_context)
+	 */
 	walker->level = vcpu->mmu.root_level;
 	slot = gfn_to_memslot(vcpu->kvm,
 			      (vcpu->cr3 & PT64_BASE_ADDR_MASK) >> PAGE_SHIFT);
@@ -75,6 +92,7 @@ static void FNAME(init_walker)(struct guest_walker *walker,
 
 	walker->table = (pt_element_t *)( (unsigned long)walker->table |
 		(unsigned long)(vcpu->cr3 & ~(PAGE_MASK | CR3_FLAGS_MASK)) );
+	/* only need pay attention to U/S and R/W flag*/
 	walker->inherited_ar = PT_USER_MASK | PT_WRITABLE_MASK;
 }
 
@@ -129,15 +147,32 @@ static pt_element_t *FNAME(fetch_guest)(struct kvm_vcpu *vcpu,
 
 		ASSERT(((unsigned long)walker->table & PAGE_MASK) ==
 		       ((unsigned long)&walker->table[index] & PAGE_MASK));
+		/*
+		 * If one of the following conditions is met, can return:
+		 *   + reach the specified level
+		 *   + higher level to specified level is NOT present, break walk
+		 *   + (level is PT_DIRECTORY_LEVEL && pgtable entry has PS bit)
+		 *     && (in 64 bit mode || 
+		 *     (
+		 *       in 32 bit mode && open PSE feature -- (CR4.PSE = 1) 
+		 *     )
+		 *     
+		 */
 		if (level == walker->level ||
 		    !is_present_pte(walker->table[index]) ||
 		    (walker->level == PT_DIRECTORY_LEVEL &&
 		     (walker->table[index] & PT_PAGE_SIZE_MASK) &&
 		     (PTTYPE == 64 || is_pse(vcpu))))
 			return &walker->table[index];
+		/*
+		 * PDPTEs in PAE mode has not U/S && R/W flag, so skip it.
+		 */
 		if (walker->level != 3 || kvm_arch_ops->is_long_mode(vcpu))
 			walker->inherited_ar &= walker->table[index];
 		paddr = safe_gpa_to_hpa(vcpu, walker->table[index] & PT_BASE_ADDR_MASK);
+		/*
+		 * no longer requires to access this level pgtable, so unmap it.
+		 */
 		kunmap_atomic(walker->table, KM_USER0);
 		walker->table = kmap_atomic(pfn_to_page(paddr >> PAGE_SHIFT),
 					    KM_USER0);
@@ -147,6 +182,24 @@ static pt_element_t *FNAME(fetch_guest)(struct kvm_vcpu *vcpu,
 
 /*
  * Fetch a shadow pte for a specific level in the paging hierarchy.
+ */
+/*
+ * We need to know, what information to abtain for walking guest 
+ * pgtable ?
+ *
+ * The pgtable attr! The next level pt or page phyiscal address is not 
+ * key information. So we can found that in paging32_fetch, the
+ * shadow_root_level is PT32E_ROOT_LEVEL, root_level is PT32_ROOT_LEVEL.
+ * shadow_root_level is ONE greater that root_level.
+ *
+ * We just need to make the attr of level 2 && 3  shadow pgtable consistent 
+ * with the level2 of the guest pgtable.
+ *
+ * > NOTE
+ * > 
+ * > No matter what mode the guest is in except 64-bit mode, guest cr4 will 
+ * > set PAE. So the shadow_root_level is always PT32E_ROOT_LEVEL except 
+ * > 64-bit mode.
  */
 static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			      struct guest_walker *walker)
@@ -159,6 +212,10 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 	level = vcpu->mmu.shadow_root_level;
 
 	for (; ; level--) {
+		/*
+		 * Whether it is paging32_fetch or paging64_fetch, SHADOW_PT_INDEX
+		 * is all PT64_INDEX.
+		 */
 		u32 index = SHADOW_PT_INDEX(addr, level);
 		u64 *shadow_ent = ((u64 *)__va(shadow_addr)) + index;
 		pt_element_t *guest_ent;
@@ -170,7 +227,16 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			prev_shadow_ent = shadow_ent;
 			continue;
 		}
-
+		/*
+		 * see paging32_init_context()
+		 * it will set 
+		 *
+		 *   context::shadow_root_level --> PT32E_ROOT_LEVEL
+		 *   context->root_level        --> PT32_ROOT_LEVEL
+		 *
+		 * So when we set level 3 && 2 shadow pgtable, we all
+		 * fetch guest level 2 pgtable.
+		 */
 		if (PTTYPE == 32 && level > PT32_ROOT_LEVEL) {
 			ASSERT(level == PT32E_ROOT_LEVEL);
 			guest_ent = FNAME(fetch_guest)(vcpu, walker,
@@ -179,15 +245,37 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			guest_ent = FNAME(fetch_guest)(vcpu, walker,
 						       level, addr);
 
+		/*
+		 * guest pgtable entry is not present, need inject PF except to 
+		 * notify guest.
+		 */
 		if (!is_present_pte(*guest_ent))
 			return NULL;
 
 		/* Don't set accessed bit on PAE PDPTRs */
+		/*
+		 * PAE PDPTE have not ACCESSED bit.
+		 *
+		 * "root_level" not equal to 3 means guest does not enable PAE.
+		 *
+		 * "root_level == 3 && walker->level !=3" means guest enable PAE,
+		 * but the level is not PDPTE.
+		 */
 		if (vcpu->mmu.root_level != 3 || walker->level != 3)
 			*guest_ent |= PT_ACCESSED_MASK;
 
+		/*
+		 * Already walked to the last level shadow pgtable -- 
+		 *   PT_PAGE_TABLE_LEVEL
+		 */
 		if (level == PT_PAGE_TABLE_LEVEL) {
-
+			/* 
+			 * Although when we called fetch_guest() earlier, the level passed 
+			 * in was PT_PAGE_TABLE_LEVEL, it may be cause early return due to
+			 * PT_DIRECTORY_LEVEL pgtable entry having PT_PAGE_SIZE_MASK. 
+			 *
+			 * In this case, walker->level is 2.
+			 */
 			if (walker->level == PT_DIRECTORY_LEVEL) {
 				if (prev_shadow_ent)
 					*prev_shadow_ent |= PT_SHADOW_PS_MARK;
@@ -200,10 +288,13 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			}
 			return shadow_ent;
 		}
-
+		/*
+		 * 
+		 */
 		shadow_addr = kvm_mmu_alloc_page(vcpu, shadow_ent);
 		if (!VALID_PAGE(shadow_addr))
 			return ERR_PTR(-ENOMEM);
+		// 32 bit mode && PDPTE
 		if (!kvm_arch_ops->is_long_mode(vcpu) && level == 3)
 			*shadow_ent = shadow_addr |
 				(*guest_ent & (PT_PRESENT_MASK | PT_PWT_MASK | PT_PCD_MASK));
@@ -223,6 +314,10 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
  * - update the guest pte dirty bit
  * - update our own dirty page tracking structures
  */
+/*
+ * return 0, means we cannot fix this write pf, we need to further process 
+ * in `FNAME(page_fault)`
+ */
 static int FNAME(fix_write_pf)(struct kvm_vcpu *vcpu,
 			       u64 *shadow_ent,
 			       struct guest_walker *walker,
@@ -233,10 +328,16 @@ static int FNAME(fix_write_pf)(struct kvm_vcpu *vcpu,
 	int writable_shadow;
 	gfn_t gfn;
 
+	/*
+	 * It seems to have been triggered for other reasons.
+	 * e.g., not present.
+	 */
 	if (is_writeble_pte(*shadow_ent))
 		return 0;
 
 	writable_shadow = *shadow_ent & PT_SHADOW_WRITABLE_MASK;
+	//cannot fix if use mode access to a kernel page or write a read-only
+	//page.
 	if (user) {
 		/*
 		 * User mode access.  Fail if it's a kernel page or a read-only
@@ -251,8 +352,36 @@ static int FNAME(fix_write_pf)(struct kvm_vcpu *vcpu,
 		 * supervisor write protection is enabled.
 		 */
 		if (!writable_shadow) {
+			/*
+			 * Set CR4.WP, inhibits supervisor from writing into read-only
+			 * pages. Cannot fix.
+			 */
 			if (is_write_protection(vcpu))
 				return 0;
+			/* clear CR4.WP, WP is disable, shadow user pages as kernel page ? 
+			 * 
+			 * We need to read `vmx_set_cr0`, it will set GUEST_CRO in vmcs guest state
+			 * to the value always masked KVM_VM_CR0_ALWAYS_ON that mask include 
+			 * CR0_PE_MASK. So we want to clear PT_WRITABLE_MASK to prevent next page fault
+			 * due to supervisor mode writing to this page. But check we need to avoid user mode 
+			 * to write successfully. So we clear user mask to shadow user pages as kernel page.
+			 *
+			 * And let's think about why we need always set PT_WRITABLE_MASK of GUEST_CR4 ?
+			 * Because we need to tracking supervisor write to read only page. If PT_WRITABLE_MASK
+			 * set, we will lose it because guest will not trap to host when supervisor write to 
+			 * read only page lead to there is no chance to update the guest pgtable entry dirty 
+			 * flag.
+			 *
+			 * * When the next user mode read access user mode page occurs after we change user page
+			 *   to kernel page in this case:
+			 *       see `fix_read_pf`.
+			 *
+			 * * write access:
+			 *      the judgment condition value is as follows
+			 *         + !(*shadow_ent & PT_SHADOW_USER_MASK): false
+			 *         + !(writable_shadow) is true
+			 *      so return to indicating that we cannot fix this pf.
+			 */
 			*shadow_ent &= ~PT_USER_MASK;
 		}
 
@@ -310,6 +439,9 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr,
 
 	/*
 	 * The page is not mapped by the guest.  Let the guest handle it.
+	 */
+	/*
+	 * See the return(NULL) code in FNAME(fetch)  for more information
 	 */
 	if (!shadow_pte) {
 		inject_page_fault(vcpu, addr, error_code);
