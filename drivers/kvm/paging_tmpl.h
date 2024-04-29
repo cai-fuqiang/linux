@@ -110,7 +110,9 @@ static void FNAME(set_pte)(struct kvm_vcpu *vcpu, u64 guest_pte,
 	set_pte_common(vcpu, shadow_pte, guest_pte & PT_BASE_ADDR_MASK,
 		       guest_pte & PT_DIRTY_MASK, access_bits);
 }
-
+/*
+ * copy guest pde attr to shadow pte
+ */
 static void FNAME(set_pde)(struct kvm_vcpu *vcpu, u64 guest_pde,
 			   u64 *shadow_pte, u64 access_bits,
 			   int index)
@@ -156,7 +158,13 @@ static pt_element_t *FNAME(fetch_guest)(struct kvm_vcpu *vcpu,
 		 *     (
 		 *       in 32 bit mode && open PSE feature -- (CR4.PSE = 1) 
 		 *     )
-		 *     
+		 *
+		 *     In 32-bit paging mode, only C4.PSE=1 AND PDE's PS flag =1,
+		 *     the PDE can map a 4-MByte page, otherwise mapping a 4-Byte 
+		 *     Page.
+		 *
+		 *     see intel sdm "4.3 32-BIT PAGING" for more information about
+		 *     how the page size is determined.
 		 */
 		if (level == walker->level ||
 		    !is_present_pte(walker->table[index]) ||
@@ -275,6 +283,11 @@ static u64 *FNAME(fetch)(struct kvm_vcpu *vcpu, gva_t addr,
 			 * PT_DIRECTORY_LEVEL pgtable entry having PT_PAGE_SIZE_MASK. 
 			 *
 			 * In this case, walker->level is 2.
+			 *
+			 * But the kvm don't set PS flag in shadow pgtable entry anytime.
+			 * I guest it cannot to be guaranteed that the memslot must be aligned
+			 * to the size of hugepage. See kvm_dev_ioctl_set_memory_region for more
+			 * information about the kvm_memory_region->memory_size checking.
 			 */
 			if (walker->level == PT_DIRECTORY_LEVEL) {
 				if (prev_shadow_ent)
@@ -452,6 +465,11 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr,
 	/*
 	 * Update the shadow pte.
 	 */
+	/*
+	 * This KVM process allows guests to intentionally trigger page 
+	 * faults to track their write behavior in order to correctly 
+	 * set dirty flags.
+	 */
 	if (write_fault)
 		fixed = FNAME(fix_write_pf)(vcpu, shadow_pte, &walker, addr,
 					    user_fault);
@@ -462,6 +480,10 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr,
 
 	/*
 	 * mmio: emulate if accessible, otherwise its a guest fault.
+	 */
+	/*
+	 * When it is not accessible, trigger guest fault even if the
+	 * address is in a MMIO page.
 	 */
 	if (is_io_pte(*shadow_pte)) {
 		if (may_access(*shadow_pte, write_fault, user_fault))
@@ -474,6 +496,14 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, gva_t addr,
 
 	/*
 	 * pte not present, guest page fault.
+	 */
+	/*
+	 * If page fault reason is pte present and it cannot fix 
+	 * by above step. The fault was caused by a page-level 
+	 * protection violation. (See intel sdm 4.7 page-fault 
+	 * exception). Under the correct configuration of KVM, 
+	 * it may be due to incorrect configuration and access 
+	 * of page table entry by guest.
 	 */
 	if (pte_present && !fixed) {
 		inject_page_fault(vcpu, addr, error_code);

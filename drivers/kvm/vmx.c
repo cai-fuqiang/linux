@@ -1333,7 +1333,10 @@ static int handle_exception(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 			spin_unlock(&vcpu->kvm->lock);
 			return 1;
 		}
-
+		/*
+		 * if paeg_fault callback cannot solve this exception.
+		 * try to emulate it.
+		 */
 		er = emulate_instruction(vcpu, kvm_run, cr2, error_code);
 		spin_unlock(&vcpu->kvm->lock);
 
@@ -1342,6 +1345,7 @@ static int handle_exception(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 			return 1;
 		case EMULATE_DO_MMIO:
 			++kvm_stat.mmio_exits;
+			//mmio
 			kvm_run->exit_reason = KVM_EXIT_MMIO;
 			return 0;
 		 case EMULATE_FAIL:
@@ -1361,6 +1365,7 @@ static int handle_exception(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 		kvm_run->exit_reason = KVM_EXIT_DEBUG;
 		return 0;
 	}
+	//unknown
 	kvm_run->exit_reason = KVM_EXIT_EXCEPTION;
 	kvm_run->ex.exception = intr_info & INTR_INFO_VECTOR_MASK;
 	kvm_run->ex.error_code = error_code;

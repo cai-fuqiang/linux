@@ -275,7 +275,12 @@ static void release_pt_page_64(struct kvm_vcpu *vcpu, hpa_t page_hpa,
 static void nonpaging_new_cr3(struct kvm_vcpu *vcpu)
 {
 }
-
+/*
+ * Handle page fault in  the guest real mode is relatively simple because 
+ * it only needs to create some shadow pgtable entries and do some simple
+ * initialization, without relying on the guest pgtable entry(guest has not 
+ * any pgtable at all!)
+ */
 static int nonpaging_map(struct kvm_vcpu *vcpu, gva_t v, hpa_t p)
 {
 	int level = PT32E_ROOT_LEVEL;
@@ -288,6 +293,9 @@ static int nonpaging_map(struct kvm_vcpu *vcpu, gva_t v, hpa_t p)
 		ASSERT(VALID_PAGE(table_addr));
 		table = __va(table_addr);
 
+		/*
+		 * last level pgtable establish mapping between PTE and hpa
+		 */
 		if (level == 1) {
 			mark_page_dirty(vcpu->kvm, v >> PAGE_SHIFT);
 			page_header_update_slot(vcpu->kvm, table, v);
@@ -304,7 +312,10 @@ static int nonpaging_map(struct kvm_vcpu *vcpu, gva_t v, hpa_t p)
 				pgprintk("nonpaging_map: ENOMEM\n");
 				return -ENOMEM;
 			}
-
+			/*
+			 * see more information from FNAME(fetch) about handling PDPTEs
+			 * in PAE mode
+			 */
 			if (level == PT32E_ROOT_LEVEL)
 				table[index] = new_table | PT_PRESENT_MASK;
 			else
@@ -363,7 +374,11 @@ static int nonpaging_page_fault(struct kvm_vcpu *vcpu, gva_t gva,
 	}
 	return ret;
 }
-
+/*
+ * guest have not pgtable and it have only GPA->HPA mapping, i.e., 
+ * shadow page table. So the mapping will not change until guest 
+ * enter pmode.
+ */
 static void nonpaging_inval_page(struct kvm_vcpu *vcpu, gva_t addr)
 {
 }
@@ -413,6 +428,9 @@ static void kvm_mmu_flush_tlb(struct kvm_vcpu *vcpu)
 		release_pt_page_64(vcpu, page->page_hpa, 1);
 	}
 	++kvm_stat.tlb_flush;
+	/*
+	 * need flush tlb about shadow translation.
+	 */
 	kvm_arch_ops->tlb_flush(vcpu);
 }
 
@@ -504,6 +522,20 @@ static void inject_page_fault(struct kvm_vcpu *vcpu,
 
 static inline int fix_read_pf(u64 *shadow_ent)
 {
+	/*
+	 * the shadow pgtable entry has shadow user mask, but
+	 * have not user mask, the reason is that user mask
+	 * unmask in `fix_write_pf` function to avoid trigger page 
+	 * fault frequently when guest execute supervisor write access 
+	 * to read-only page with CR4.WP = 0. It mask PT_WRITABLE_MASK
+	 * and unmask PT_USER_MASK to let supervisor write access 
+	 * successfully and let user write access trigger page fault.
+	 *
+	 * But it over covered user read access. So fix it in this function.
+	 *
+	 * See `fix_write_pf` function for more information about how KVM 
+	 * emulate guest CR4.WP and how to track guest write with CR4.WP=0.
+	 */
 	if ((*shadow_ent & PT_SHADOW_USER_MASK) &&
 	    !(*shadow_ent & PT_USER_MASK)) {
 		/*
@@ -532,6 +564,13 @@ static int may_access(u64 pte, int write, int user)
 /*
  * Remove a shadow pte.
  */
+/*
+ * Kvm KVM treats the shadow page table as TLBs. Kvm only remove shadow pgtable
+ * when guest initiate TLB flush explicitly. E.g., MOV to CR3 or invlpg. KVM
+ * KVM will drop the shadow pgtable related to the VA indicated by invlpg or 
+ * drop all shadow pgtable of the vcpu for emulating MOV to CR3. And need flush
+ * TLBs to invalidate  but it will drop all tlbs about the cpu.
+ */
 static void paging_inval_page(struct kvm_vcpu *vcpu, gva_t addr)
 {
 	hpa_t page_addr = vcpu->mmu.root_hpa;
@@ -553,6 +592,9 @@ static void paging_inval_page(struct kvm_vcpu *vcpu, gva_t addr)
 
 		page_addr = table[index] & PT64_BASE_ADDR_MASK;
 
+		/*
+		 * If
+		 */
 		if (level == PT_DIRECTORY_LEVEL &&
 			  (table[index] & PT_SHADOW_PS_MARK)) {
 			table[index] = 0;
