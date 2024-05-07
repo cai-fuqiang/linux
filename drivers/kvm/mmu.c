@@ -324,6 +324,23 @@ static void rmap_desc_remove_entry(struct kvm_vcpu *vcpu,
 {
 	int j;
 
+	/*
+	 * for example:
+	 * call this function before:
+	 * kvm_rmap_desc->shadow_ptes is:
+	 * |a|b|c|d|e|0|0|
+	 *    i
+	 *
+	 * after for loop, it is:
+	 * |a|b|c|d|e|0|0|
+	 *    i     j
+	 * 
+	 * it will change the value from j to i, and set j to zero:
+	 * |a|e|c|d|0|0|0|
+	 *
+	 * This keeps the data compact.Let all positions's value before 
+	 * the position that value is 0 be non-0.
+	 */
 	for (j = RMAP_EXT - 1; !desc->shadow_ptes[j] && j > i; --j)
 		;
 	desc->shadow_ptes[i] = desc->shadow_ptes[j];
