@@ -87,9 +87,20 @@ static void FNAME(init_walker)(struct guest_walker *walker,
 	hpa = safe_gpa_to_hpa(vcpu, vcpu->cr3 & PT64_BASE_ADDR_MASK);
 	walker->table = kmap_atomic(pfn_to_page(hpa >> PAGE_SHIFT), KM_USER0);
 
+	/*
+	 * pae mode cr3 format has checked the reserved bit in function
+	 * `pdptrs_have_reserved_bits_set()`
+	 */
 	ASSERT((!kvm_arch_ops->is_long_mode(vcpu) && is_pae(vcpu)) ||
 	       (vcpu->cr3 & ~(PAGE_MASK | CR3_FLAGS_MASK)) == 0);
 
+	/*
+	 * NOTE
+	 *
+	 * Pae pdpte page is a partial page because the base of pdpte requires
+	 * 32-byte align not 4K-byte, The walker->table here just points to base
+	 * address of the page.
+	 */
 	walker->table = (pt_element_t *)( (unsigned long)walker->table |
 		(unsigned long)(vcpu->cr3 & ~(PAGE_MASK | CR3_FLAGS_MASK)) );
 	/* only need pay attention to U/S and R/W flag*/
@@ -177,6 +188,23 @@ static pt_element_t *FNAME(fetch_guest)(struct kvm_vcpu *vcpu,
 		 */
 		if (walker->level != 3 || kvm_arch_ops->is_long_mode(vcpu))
 			walker->inherited_ar &= walker->table[index];
+		/*
+		 * It is not considered here that the pae page is a partial page.
+		 * Instead, it is assumed that pdpte must be at the base address
+		 * of the page. I think it is a mistake. But Avi has fix it on patch
+		 *    1342d3536d6a12541ceb276da15f043db90716eb
+		 *    KVM: MMU: Load the pae pdptrs on cr3 change like the processor does
+		 *
+		 *    1b0973bd8f788178f21d9eebdd879203464f8528
+		 *    KVM: MMU: Use the guest pdptrs instead of mapping cr3 in pae mode
+		 *
+		 * This patch works like a CPU, loading pdpte from memory to "register"
+		 * (vcpu->pdptrs[]) at certain times. When loading each entry from the page
+		 * where pdpte is located, offset will be calculated correctly.
+		 *
+		 * And in walk_addr()(I.E., fetch_guest) function, this will use vcpu->pdptrs[]
+		 * directly instead mapping cr3.
+		 */
 		paddr = safe_gpa_to_hpa(vcpu, walker->table[index] & PT_BASE_ADDR_MASK);
 		/*
 		 * no longer requires to access this level pgtable, so unmap it.
