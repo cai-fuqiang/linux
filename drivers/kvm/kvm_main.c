@@ -301,10 +301,46 @@ static void inject_gp(struct kvm_vcpu *vcpu)
 	kvm_arch_ops->inject_gp(vcpu, 0);
 }
 
+/*
+ * This function determines whether the PAE PDPTE pointed to by
+ * cr3 has the reserved bit set.
+ *
+ * When its caller finds that the reserved bit is set, it may
+ * inject an exception into the guest, such as #GP. (See `set_cr0/cr4/cr3()`
+ * function for more information)
+ */
 static int pdptrs_have_reserved_bits_set(struct kvm_vcpu *vcpu,
 					 unsigned long cr3)
 {
 	gfn_t pdpt_gfn = cr3 >> PAGE_SHIFT;
+	/*
+	 * In intel sdm 4.4.1 PDPTE Registers, it mentions:
+	 *   ```
+	 *   When PAE paging is used, CR3 references the base of
+	 *   a 32-Byte page-directory-pointer table.
+	 *
+	 *   and
+	 *
+	 *   CR3 bit[4:0] is reserved
+	 *   ```
+	 *
+	 * so `(cr3 & (PAGE_SIZE-1))` is to calculate the offset
+	 * of the pdpte in this guest page and `>> 5` is to mask the
+	 * reserved bit.
+	 *
+	 * But this offset cannot use for pdpt[] array index directly
+	 * because the type of pdpt[] is `u64 *` which is 8-byte span.
+	 * I.e., 2 >> 3,
+	 *
+	 * In commit
+	 *  1342d3536d6a12541ceb276da15f043db90716eb
+	 *  [PATCH] KVM: MMU: Load the pae pdptrs on cr3 change like the processor does
+	 *
+	 * avi modify this code to
+	 *
+	 *  - unsigned offset = (cr3 & (PAGE_SIZE-1)) >> 5;
+	 *  + unsigned offset = ((cr3 & (PAGE_SIZE-1)) >> 5) << 2;
+	 */
 	unsigned offset = (cr3 & (PAGE_SIZE-1)) >> 5;
 	int i;
 	u64 pdpte;
@@ -318,6 +354,12 @@ static int pdptrs_have_reserved_bits_set(struct kvm_vcpu *vcpu,
 
 	for (i = 0; i < 4; ++i) {
 		pdpte = pdpt[offset + i];
+		/*
+		 * reserved bit include:
+		 *   + [63 : M] (M is 36)
+		 *   + [8  : 5]
+		 *   + [2  : 1]
+		 */
 		if ((pdpte & 1) && (pdpte & 0xfffffff0000001e6ull))
 			break;
 	}
