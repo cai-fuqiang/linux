@@ -1,0 +1,253 @@
+From a7052897b3bcd568a9f5bfaa558957039e7e7ec0 Mon Sep 17 00:00:00 2001
+From: Marcelo Tosatti <mtosatti@redhat.com>
+Date: Tue, 23 Sep 2008 13:18:35 -0300
+Subject: [PATCH 07/13] KVM: x86: trap invlpg
+
+With pages out of sync invlpg needs to be trapped. For now simply nuke
+the entry.
+
+Untested on AMD.
+
+Signed-off-by: Marcelo Tosatti <mtosatti@redhat.com>
+Signed-off-by: Avi Kivity <avi@redhat.com>
+---
+ arch/x86/kvm/mmu.c         | 18 ++++++++++++++++++
+ arch/x86/kvm/paging_tmpl.h | 25 +++++++++++++++++++++++++
+ arch/x86/kvm/svm.c         | 13 +++++++++++--
+ arch/x86/kvm/vmx.c         | 19 ++++++++++++++++---
+ arch/x86/kvm/x86.c         |  1 +
+ include/asm-x86/kvm_host.h |  2 ++
+ 6 files changed, 73 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kvm/mmu.c b/arch/x86/kvm/mmu.c
+index 9d8c4bb68a81..e89af1df4fcd 100644
+--- a/arch/x86/kvm/mmu.c
++++ b/arch/x86/kvm/mmu.c
+@@ -877,6 +877,10 @@ static int nonpaging_sync_page(struct kvm_vcpu *vcpu,
+ 	return 1;
+ }
+ 
++static void nonpaging_invlpg(struct kvm_vcpu *vcpu, gva_t gva)
++{
++}
++
+ static struct kvm_mmu_page *kvm_mmu_lookup_page(struct kvm *kvm, gfn_t gfn)
+ {
+ 	unsigned index;
+@@ -1589,6 +1593,7 @@ static int nonpaging_init_context(struct kvm_vcpu *vcpu)
+ 	context->free = nonpaging_free;
+ 	context->prefetch_page = nonpaging_prefetch_page;
+ 	context->sync_page = nonpaging_sync_page;
++	context->invlpg = nonpaging_invlpg;
+ 	context->root_level = 0;
+ 	context->shadow_root_level = PT32E_ROOT_LEVEL;
+ 	context->root_hpa = INVALID_PAGE;
+@@ -1637,6 +1642,7 @@ static int paging64_init_context_common(struct kvm_vcpu *vcpu, int level)
+ 	context->gva_to_gpa = paging64_gva_to_gpa;
+ 	context->prefetch_page = paging64_prefetch_page;
+ 	context->sync_page = paging64_sync_page;
++	context->invlpg = paging64_invlpg;
+ 	context->free = paging_free;
+ 	context->root_level = level;
+ 	context->shadow_root_level = level;
+@@ -1659,6 +1665,7 @@ static int paging32_init_context(struct kvm_vcpu *vcpu)
+ 	context->free = paging_free;
+ 	context->prefetch_page = paging32_prefetch_page;
+ 	context->sync_page = paging32_sync_page;
++	context->invlpg = paging32_invlpg;
+ 	context->root_level = PT32_ROOT_LEVEL;
+ 	context->shadow_root_level = PT32E_ROOT_LEVEL;
+ 	context->root_hpa = INVALID_PAGE;
+@@ -1679,6 +1686,7 @@ static int init_kvm_tdp_mmu(struct kvm_vcpu *vcpu)
+ 	context->free = nonpaging_free;
+ 	context->prefetch_page = nonpaging_prefetch_page;
+ 	context->sync_page = nonpaging_sync_page;
++	context->invlpg = nonpaging_invlpg;
+ 	context->shadow_root_level = kvm_x86_ops->get_tdp_level();
+ 	context->root_hpa = INVALID_PAGE;
+ 
+@@ -2071,6 +2079,16 @@ out:
+ }
+ EXPORT_SYMBOL_GPL(kvm_mmu_page_fault);
+ 
++void kvm_mmu_invlpg(struct kvm_vcpu *vcpu, gva_t gva)
++{
++	spin_lock(&vcpu->kvm->mmu_lock);
++	vcpu->arch.mmu.invlpg(vcpu, gva);
++	spin_unlock(&vcpu->kvm->mmu_lock);
++	kvm_mmu_flush_tlb(vcpu);
++	++vcpu->stat.invlpg;
++}
++EXPORT_SYMBOL_GPL(kvm_mmu_invlpg);
++
+ void kvm_enable_tdp(void)
+ {
+ 	tdp_enabled = true;
+diff --git a/arch/x86/kvm/paging_tmpl.h b/arch/x86/kvm/paging_tmpl.h
+index 776fb6d2fd81..dc169e8148b1 100644
+--- a/arch/x86/kvm/paging_tmpl.h
++++ b/arch/x86/kvm/paging_tmpl.h
+@@ -461,6 +461,31 @@ out_unlock:
+ 	return 0;
+ }
+ 
++static int FNAME(shadow_invlpg_entry)(struct kvm_shadow_walk *_sw,
++				      struct kvm_vcpu *vcpu, u64 addr,
++				      u64 *sptep, int level)
++{
++
++	if (level == PT_PAGE_TABLE_LEVEL) {
++		if (is_shadow_present_pte(*sptep))
++			rmap_remove(vcpu->kvm, sptep);
++		set_shadow_pte(sptep, shadow_trap_nonpresent_pte);
++		return 1;
++	}
++	if (!is_shadow_present_pte(*sptep))
++		return 1;
++	return 0;
++}
++
++static void FNAME(invlpg)(struct kvm_vcpu *vcpu, gva_t gva)
++{
++	struct shadow_walker walker = {
++		.walker = { .entry = FNAME(shadow_invlpg_entry), },
++	};
++
++	walk_shadow(&walker.walker, vcpu, gva);
++}
++
+ static gpa_t FNAME(gva_to_gpa)(struct kvm_vcpu *vcpu, gva_t vaddr)
+ {
+ 	struct guest_walker walker;
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index 9b54550fa4d2..9c4ce657d963 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -525,6 +525,7 @@ static void init_vmcb(struct vcpu_svm *svm)
+ 				(1ULL << INTERCEPT_CPUID) |
+ 				(1ULL << INTERCEPT_INVD) |
+ 				(1ULL << INTERCEPT_HLT) |
++				(1ULL << INTERCEPT_INVLPG) |
+ 				(1ULL << INTERCEPT_INVLPGA) |
+ 				(1ULL << INTERCEPT_IOIO_PROT) |
+ 				(1ULL << INTERCEPT_MSR_PROT) |
+@@ -589,7 +590,8 @@ static void init_vmcb(struct vcpu_svm *svm)
+ 	if (npt_enabled) {
+ 		/* Setup VMCB for Nested Paging */
+ 		control->nested_ctl = 1;
+-		control->intercept &= ~(1ULL << INTERCEPT_TASK_SWITCH);
++		control->intercept &= ~((1ULL << INTERCEPT_TASK_SWITCH) |
++					(1ULL << INTERCEPT_INVLPG));
+ 		control->intercept_exceptions &= ~(1 << PF_VECTOR);
+ 		control->intercept_cr_read &= ~(INTERCEPT_CR0_MASK|
+ 						INTERCEPT_CR3_MASK);
+@@ -1164,6 +1166,13 @@ static int cpuid_interception(struct vcpu_svm *svm, struct kvm_run *kvm_run)
+ 	return 1;
+ }
+ 
++static int invlpg_interception(struct vcpu_svm *svm, struct kvm_run *kvm_run)
++{
++	if (emulate_instruction(&svm->vcpu, kvm_run, 0, 0, 0) != EMULATE_DONE)
++		pr_unimpl(&svm->vcpu, "%s: failed\n", __func__);
++	return 1;
++}
++
+ static int emulate_on_interception(struct vcpu_svm *svm,
+ 				   struct kvm_run *kvm_run)
+ {
+@@ -1417,7 +1426,7 @@ static int (*svm_exit_handlers[])(struct vcpu_svm *svm,
+ 	[SVM_EXIT_CPUID]			= cpuid_interception,
+ 	[SVM_EXIT_INVD]                         = emulate_on_interception,
+ 	[SVM_EXIT_HLT]				= halt_interception,
+-	[SVM_EXIT_INVLPG]			= emulate_on_interception,
++	[SVM_EXIT_INVLPG]			= invlpg_interception,
+ 	[SVM_EXIT_INVLPGA]			= invalid_op_interception,
+ 	[SVM_EXIT_IOIO] 		  	= io_interception,
+ 	[SVM_EXIT_MSR]				= msr_interception,
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 025bf4011abc..4556cc3715bb 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -1130,7 +1130,8 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
+ 	      CPU_BASED_CR3_STORE_EXITING |
+ 	      CPU_BASED_USE_IO_BITMAPS |
+ 	      CPU_BASED_MOV_DR_EXITING |
+-	      CPU_BASED_USE_TSC_OFFSETING;
++	      CPU_BASED_USE_TSC_OFFSETING |
++	      CPU_BASED_INVLPG_EXITING;
+ 	opt = CPU_BASED_TPR_SHADOW |
+ 	      CPU_BASED_USE_MSR_BITMAPS |
+ 	      CPU_BASED_ACTIVATE_SECONDARY_CONTROLS;
+@@ -1159,9 +1160,11 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
+ 		_cpu_based_exec_control &= ~CPU_BASED_TPR_SHADOW;
+ #endif
+ 	if (_cpu_based_2nd_exec_control & SECONDARY_EXEC_ENABLE_EPT) {
+-		/* CR3 accesses don't need to cause VM Exits when EPT enabled */
++		/* CR3 accesses and invlpg don't need to cause VM Exits when EPT
++		   enabled */
+ 		min &= ~(CPU_BASED_CR3_LOAD_EXITING |
+-			 CPU_BASED_CR3_STORE_EXITING);
++			 CPU_BASED_CR3_STORE_EXITING |
++			 CPU_BASED_INVLPG_EXITING);
+ 		if (adjust_vmx_controls(min, opt, MSR_IA32_VMX_PROCBASED_CTLS,
+ 					&_cpu_based_exec_control) < 0)
+ 			return -EIO;
+@@ -2790,6 +2793,15 @@ static int handle_vmcall(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
+ 	return 1;
+ }
+ 
++static int handle_invlpg(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
++{
++	u64 exit_qualification = vmcs_read64(EXIT_QUALIFICATION);
++
++	kvm_mmu_invlpg(vcpu, exit_qualification);
++	skip_emulated_instruction(vcpu);
++	return 1;
++}
++
+ static int handle_wbinvd(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
+ {
+ 	skip_emulated_instruction(vcpu);
+@@ -2958,6 +2970,7 @@ static int (*kvm_vmx_exit_handlers[])(struct kvm_vcpu *vcpu,
+ 	[EXIT_REASON_MSR_WRITE]               = handle_wrmsr,
+ 	[EXIT_REASON_PENDING_INTERRUPT]       = handle_interrupt_window,
+ 	[EXIT_REASON_HLT]                     = handle_halt,
++	[EXIT_REASON_INVLPG]		      = handle_invlpg,
+ 	[EXIT_REASON_VMCALL]                  = handle_vmcall,
+ 	[EXIT_REASON_TPR_BELOW_THRESHOLD]     = handle_tpr_below_threshold,
+ 	[EXIT_REASON_APIC_ACCESS]             = handle_apic_access,
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 88e6d9abbd2b..efee85ba07e5 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -2341,6 +2341,7 @@ static unsigned long get_segment_base(struct kvm_vcpu *vcpu, int seg)
+ 
+ int emulate_invlpg(struct kvm_vcpu *vcpu, gva_t address)
+ {
++	kvm_mmu_invlpg(vcpu, address);
+ 	return X86EMUL_CONTINUE;
+ }
+ 
+diff --git a/include/asm-x86/kvm_host.h b/include/asm-x86/kvm_host.h
+index 475d8ab83bff..8b935cc4c14b 100644
+--- a/include/asm-x86/kvm_host.h
++++ b/include/asm-x86/kvm_host.h
+@@ -222,6 +222,7 @@ struct kvm_mmu {
+ 			      struct kvm_mmu_page *page);
+ 	int (*sync_page)(struct kvm_vcpu *vcpu,
+ 			 struct kvm_mmu_page *sp);
++	void (*invlpg)(struct kvm_vcpu *vcpu, gva_t gva);
+ 	hpa_t root_hpa;
+ 	int root_level;
+ 	int shadow_root_level;
+@@ -591,6 +592,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu);
+ int kvm_fix_hypercall(struct kvm_vcpu *vcpu);
+ 
+ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t gva, u32 error_code);
++void kvm_mmu_invlpg(struct kvm_vcpu *vcpu, gva_t gva);
+ 
+ void kvm_enable_tdp(void);
+ void kvm_disable_tdp(void);
+-- 
+2.42.0
+
