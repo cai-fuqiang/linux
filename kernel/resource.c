@@ -31,6 +31,10 @@
 #include <linux/vmalloc.h>
 #include <asm/io.h>
 
+#include <my_debug/pci_res_deb.h>
+
+#include <linux/delay.h>
+#include <linux/kernel.h>
 
 struct resource ioport_resource = {
 	.name	= "PCI IO",
@@ -789,7 +793,21 @@ static int reallocate_resource(struct resource *root, struct resource *old,
 		__release_resource(old, true);
 		*old = new;
 		conflict = __request_resource(root, old);
-		BUG_ON(conflict);
+		if (conflict) {
+			pr_info("new res\n");
+			pr_info("the old conflict with sibling\n");
+			print_one_resource_prefix(&new, "new res");
+			print_one_resource_prefix(conflict, "conflict res");
+
+			/* So that GDB can easily obtain the stack trace */
+			pr_info("SKIP BUG_ON: %s:%d\n", __func__, __LINE__);
+			dump_stack();
+			while (1) {
+				mdelay(1000);
+			}
+		}
+		/* will not execute here */
+		//BUG_ON(conflict);
 	}
 out:
 	write_unlock(&resource_lock);

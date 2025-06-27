@@ -28,6 +28,8 @@
 #include <linux/acpi.h>
 #include "pci.h"
 
+#include <my_debug/pci_res_deb.h>
+
 unsigned int pci_flags;
 EXPORT_SYMBOL_GPL(pci_flags);
 
@@ -474,6 +476,7 @@ static void __assign_resources_sorted(struct list_head *head,
 
 requested_and_reassign:
 	/* Satisfy the must-have resource requests */
+	pr_info("enter assign_requested_resources_sorted\n");
 	assign_requested_resources_sorted(head, fail_head);
 
 	/* Try to satisfy any additional optional resource requests */
@@ -498,10 +501,19 @@ static void pbus_assign_resources_sorted(const struct pci_bus *bus,
 					 struct list_head *fail_head)
 {
 	struct pci_dev *dev;
+	struct pci_dev_resource *dev_res;
+	struct resource *res;
 	LIST_HEAD(head);
 
 	list_for_each_entry(dev, &bus->devices, bus_list)
 		__dev_sort_resources(dev, &head);
+
+	pr_info("__dev_sort_resources end, print BEG\n");
+	list_for_each_entry(dev_res, &head, list) {
+		res = dev_res->res;
+		print_one_resource(res);
+	}
+	pr_info("__dev_sort_resources end, print END END\n");
 
 	__assign_resources_sorted(&head, realloc_head, fail_head);
 }

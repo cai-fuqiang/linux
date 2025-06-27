@@ -500,16 +500,17 @@ void __init pcibios_set_cache_line_size(void)
 
 int __init pcibios_init(void)
 {
+	pr_info("pcibios_init BEG\n");
 	if (!raw_pci_ops && !raw_pci_ext_ops) {
 		printk(KERN_WARNING "PCI: System does not support PCI\n");
 		return 0;
 	}
-
 	pcibios_set_cache_line_size();
 	pcibios_resource_survey();
 
 	if (pci_bf_sort >= pci_force_bf)
 		pci_sort_breadthfirst();
+	pr_info("pcibios_init END\n");
 	return 0;
 }
 

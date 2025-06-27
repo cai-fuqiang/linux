@@ -787,6 +787,7 @@ static void hotplug_event(u32 type, struct acpiphp_context *context)
 	struct acpiphp_slot *slot = func->slot;
 	struct acpiphp_bridge *bridge;
 
+	pr_info("hotplug_event BEG\n");
 	acpi_lock_hp_context();
 	bridge = context->bridge;
 	if (bridge)
@@ -832,6 +833,7 @@ static void hotplug_event(u32 type, struct acpiphp_context *context)
 	pci_unlock_rescan_remove();
 	if (bridge)
 		put_bridge(bridge);
+	pr_info("hotplug_event END\n");
 }
 
 static int acpiphp_hotplug_notify(struct acpi_device *adev, u32 type)

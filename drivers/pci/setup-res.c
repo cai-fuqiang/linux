@@ -22,6 +22,8 @@
 #include <linux/slab.h>
 #include "pci.h"
 
+#include <my_debug/pci_res_deb.h>
+
 static void pci_std_update_resource(struct pci_dev *dev, int resno)
 {
 	struct pci_bus_region region;
@@ -138,6 +140,10 @@ int pci_claim_resource(struct pci_dev *dev, int resource)
 	struct resource *res = &dev->resource[resource];
 	const char *res_name = pci_resource_name(dev, resource);
 	struct resource *root, *conflict;
+
+	if (resource == 0) {
+		print_one_resource_prefix(res, "pci_claim_resource");
+	}
 
 	if (res->flags & IORESOURCE_UNSET) {
 		pci_info(dev, "%s %pR: can't claim; no address assigned\n",
@@ -342,6 +348,13 @@ int pci_assign_resource(struct pci_dev *dev, int resno)
 	}
 
 	size = resource_size(res);
+	if (resno == 0) {
+		pr_info("_pci_assign_resource before\n");
+		pr_info("print_asigned device BEG\n");
+		print_one_resource(res);
+		pr_info("print_asigned device END\n");
+		print_resource_sibling(dev, 0);
+	}
 	ret = _pci_assign_resource(dev, resno, size, align);
 
 	/*
@@ -369,6 +382,7 @@ int pci_assign_resource(struct pci_dev *dev, int resno)
 }
 EXPORT_SYMBOL(pci_assign_resource);
 
+
 int pci_reassign_resource(struct pci_dev *dev, int resno,
 			  resource_size_t addsize, resource_size_t min_align)
 {
@@ -392,6 +406,7 @@ int pci_reassign_resource(struct pci_dev *dev, int resno,
 	/* already aligned with min_align */
 	new_size = resource_size(res) + addsize;
 	ret = _pci_assign_resource(dev, resno, new_size, min_align);
+
 	if (ret) {
 		res->flags = flags;
 		pci_info(dev, "%s %pR: failed to expand by %#llx\n",
