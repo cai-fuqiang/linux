@@ -2036,6 +2036,9 @@ static void advance_periodic_target_expiration(struct kvm_lapic *apic)
 	u64 tscl = rdtsc();
 	ktime_t delta;
 
+	u64 delta_cycles_u;
+	u64 delta_cycles_s;
+
 	/*
 	 * Synchronize both deadlines to the same time source or
 	 * differences in the periods (caused by differences in the
@@ -2047,8 +2050,11 @@ static void advance_periodic_target_expiration(struct kvm_lapic *apic)
 		ktime_add_ns(apic->lapic_timer.target_expiration,
 				apic->lapic_timer.period);
 	delta = ktime_sub(apic->lapic_timer.target_expiration, now);
+	delta_cycles_u = nsec_to_cycles(apic->vcpu, abs(delta));
+	delta_cycles_s = delta > 0 ? delta_cycles_u : -delta_cycles_u;
+
 	apic->lapic_timer.tscdeadline = kvm_read_l1_tsc(apic->vcpu, tscl) +
-		nsec_to_cycles(apic->vcpu, delta);
+		delta_cycles_s;
 }
 
 static void start_sw_period(struct kvm_lapic *apic)
