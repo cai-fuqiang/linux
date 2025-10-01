@@ -68,6 +68,9 @@
 static bool lapic_timer_advance __read_mostly = true;
 module_param(lapic_timer_advance, bool, 0444);
 
+static u64 sw_exp_times = 0;
+static u64 hw_exp_times = 0;
+
 #define LAPIC_TIMER_ADVANCE_ADJUST_MIN	100	/* clock cycles */
 #define LAPIC_TIMER_ADVANCE_ADJUST_MAX	10000	/* clock cycles */
 #define LAPIC_TIMER_ADVANCE_NS_INIT	1000
@@ -2039,6 +2042,10 @@ static void advance_periodic_target_expiration(struct kvm_lapic *apic)
 	u64 delta_cycles_u;
 	u64 delta_cycles_s;
 
+	static u64 last_sw_exp_times = 0;
+	static u64 last_hw_exp_times = 0;
+	static ktime_t last_print_ns  = 0;
+
 	/*
 	 * Synchronize both deadlines to the same time source or
 	 * differences in the periods (caused by differences in the
@@ -2052,9 +2059,28 @@ static void advance_periodic_target_expiration(struct kvm_lapic *apic)
 	delta = ktime_sub(apic->lapic_timer.target_expiration, now);
 	delta_cycles_u = nsec_to_cycles(apic->vcpu, abs(delta));
 	delta_cycles_s = delta > 0 ? delta_cycles_u : -delta_cycles_u;
-
+#ifndef MERGE_PACTH
+	apic->lapic_timer.tscdeadline = kvm_read_l1_tsc(apic->vcpu, tscl) +
+		nsec_to_cycles(apic->vcpu, delta);
+#else
 	apic->lapic_timer.tscdeadline = kvm_read_l1_tsc(apic->vcpu, tscl) +
 		delta_cycles_s;
+#endif
+	if (delta <= 0) {
+		if (ktime_sub(now, last_print_ns) < 1000000000) {
+		        return;
+		}
+		last_print_ns = now;
+		pr_info("sw_exp times delta %llu\n",
+		                sw_exp_times - last_sw_exp_times);
+		pr_info("hw_exp times delta %llu\n",
+		                hw_exp_times - last_hw_exp_times);
+		pr_info("the delta(%llx) tscdeadline(%llx) delta_cyc_u(%llu) delta_cyc_s(%lld)\n",
+		                delta, apic->lapic_timer.tscdeadline,
+		                delta_cycles_u, delta_cycles_s);
+		last_sw_exp_times = sw_exp_times;
+		last_hw_exp_times = hw_exp_times;
+	}
 }
 
 static void start_sw_period(struct kvm_lapic *apic)
@@ -2178,6 +2204,7 @@ void kvm_lapic_expired_hv_timer(struct kvm_vcpu *vcpu)
 	cancel_hv_timer(apic);
 
 	if (apic_lvtt_period(apic) && apic->lapic_timer.period) {
+		hw_exp_times++;
 		advance_periodic_target_expiration(apic);
 		restart_apic_timer(apic);
 	}
@@ -2863,6 +2890,7 @@ static enum hrtimer_restart apic_timer_fn(struct hrtimer *data)
 	apic_timer_expired(apic, true);
 
 	if (lapic_is_periodic(apic)) {
+		sw_exp_times++;
 		advance_periodic_target_expiration(apic);
 		hrtimer_add_expires_ns(&ktimer->timer, ktimer->period);
 		return HRTIMER_RESTART;

@@ -8079,8 +8079,10 @@ int vmx_set_hv_timer(struct kvm_vcpu *vcpu, u64 guest_deadline_tsc,
 	 * It's possible that it fits on later vmentries, but checking
 	 * on every vmentry is costly so we just use an hrtimer.
 	 */
-	if (delta_tsc >> (cpu_preemption_timer_multi + 32))
+	if (delta_tsc >> (cpu_preemption_timer_multi + 32)) {
+		pr_info("the delta_tsc is too large (%llx)\n", delta_tsc);
 		return -ERANGE;
+	}
 
 	vmx->hv_deadline_tsc = tscl + delta_tsc;
 	*expired = !delta_tsc;
