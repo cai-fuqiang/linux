@@ -2140,17 +2140,20 @@ static void advance_periodic_target_expiration(struct kvm_lapic *apic)
 	apic->lapic_timer.target_expiration =
 		ktime_add_ns(apic->lapic_timer.target_expiration,
 				apic->lapic_timer.period);
-	delta = ktime_sub(apic->lapic_timer.target_expiration, now);
 
 	/*
-	 * Don't adjust the tscdeadline if the next period has already expired,
-	 * e.g. due to software overhead resulting in delays larger than the
-	 * period.  Blindly adding a negative delta could cause the deadline to
-	 * become excessively large due to the deadline being an unsigned value.
+	 * When the virtual machine is paused, the hv timer also stops
+	 * advancing. After it is resumed, this may result in a large delta. If
+	 * the target_expiration only advances by one period each time, it will
+	 * cause KVM to frequently handle timer expirations.
 	 */
-	apic->lapic_timer.tscdeadline = kvm_read_l1_tsc(apic->vcpu, tscl);
-	if (delta > 0)
-		apic->lapic_timer.tscdeadline += nsec_to_cycles(apic->vcpu, delta);
+	if (ktimer->period > 0 &&
+	    ktime_before(apic->lapic_timer.target_expiration, now))
+		apic->lapic_timer.target_expiration = now;
+
+	delta = ktime_sub(apic->lapic_timer.target_expiration, now);
+	apic->lapic_timer.tscdeadline = kvm_read_l1_tsc(apic->vcpu, tscl) +
+		nsec_to_cycles(apic->vcpu, delta);
 }
 
 static void start_sw_period(struct kvm_lapic *apic)
@@ -2980,7 +2983,7 @@ static enum hrtimer_restart apic_timer_fn(struct hrtimer *data)
 
 	if (lapic_is_periodic(apic)) {
 		advance_periodic_target_expiration(apic);
-		hrtimer_add_expires_ns(&ktimer->timer, ktimer->period);
+		hrtimer_set_expires(&ktimer->timer, apic->lapic_timer.target_expiration);
 		return HRTIMER_RESTART;
 	} else
 		return HRTIMER_NORESTART;
