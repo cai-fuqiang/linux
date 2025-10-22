@@ -1,0 +1,70 @@
+From a83133e14b124b82704c24c3de82e6205ff1ee22 Mon Sep 17 00:00:00 2001
+From: wangfuqiang49 <wangfuqiang49@jd.com>
+Date: Tue, 21 Oct 2025 23:17:17 +0800
+Subject: [PATCH 0/2] KVM: x86: fix some kvm period timer BUG
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The following two patches fix some bugs in the x86 KVM periodic timer.
+
+=======
+patch 1
+=======
+
+The first patch fixes a problem where, if the next period has already
+expired, e.g. due to the period being smaller than the delay in processing
+the timer, the hv timer will switch to the software timer and never switch
+back. 
+
+The reproduction steps and patch verification results at link [1].
+
+=======
+patch 2
+=======
+
+The second patch fixes an issue where, if the first patch has not been
+applied, resuming a virtual machine after it has been suspended for a long
+time may trigger a hard lockup. Link [2] also talks about this issue.
+
+Link [2] also talks about this issue, but I don’t think it can actually
+reproduce the problem. Because of commit [3], as long as the KVM timer is
+running, target_expiration will keep catching up to now (unless every
+single delay from timer virtualization is longer than the period, which is
+a pretty extreme case). Also, patch 2 is based on the changes in link [2],
+but with some differences: In link [2], target_expiration is updated to
+"now - period", and I’m not sure why it doesn’t just catch up to now—maybe
+I’m missing something? In patch 2, I tentatively set target_expiration to
+catch up to now.
+
+The reproduction steps and patch verification results at link [4].
+
+=============================================================
+other questions -- Should the two patches be merged into one?
+=============================================================
+
+If we end up making target_expiration catch up to now, patch 1 and patch 2
+could probably be combined, since we wouldn’t need the delta > 0 check
+anymore. But keeping them separate helps clearly show the two different
+problems we’re fixing. 
+
+However, the hardlockup issue only occurs when patch 1 is not merged, which
+leads to the commit message for the second patch repeatedly mentioning
+"...previous patch is merged". I’m not sure if this is appropriate, so I
+would like to hear your suggestions.
+
+[1]: https://github.com/cai-fuqiang/kernel_test/tree/master/period_timer_test
+[2]: https://lore.kernel.org/kvm/YgahsSubOgFtyorl@fuller.cnet/
+[3]: d8f2f498d9ed ("x86/kvm: fix LAPIC timer drift when guest uses periodic mode")
+[4]: https://github.com/cai-fuqiang/md/tree/master/case/intel_kvm_period_timer
+
+fuqiang wang (2):
+  avoid hv timer fallback to sw timer if delay exceeds period
+  fix hardlockup when waking VM after long suspend
+
+ arch/x86/kvm/lapic.c | 30 +++++++++++++++++++++++-------
+ 1 file changed, 23 insertions(+), 7 deletions(-)
+
+-- 
+2.47.0
+
