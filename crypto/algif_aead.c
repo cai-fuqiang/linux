@@ -35,6 +35,7 @@
 #include <linux/module.h>
 #include <linux/net.h>
 #include <net/sock.h>
+#include <trace/events/crypto_splice.h>
 
 struct aead_tfm {
 	struct crypto_aead *aead;
@@ -196,6 +197,37 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 		goto free;
 	}
 
+	{
+		struct scatterlist *__sg;
+		int __i;
+
+		for_each_sg(areq->tsgl, __sg, areq->tsgl_entries, __i) {
+			struct page *__page = sg_page(__sg);
+			struct folio *__folio;
+			struct address_space *__mapping;
+			unsigned long __ino = 0;
+			int __src_type = SOURCE_PIPE_BUF;
+			const char *__path = "";
+
+			if (__page) {
+				__folio = page_folio(__page);
+				__mapping = __folio->mapping;
+				if (__mapping && __mapping->host) {
+					__src_type = SOURCE_PAGE_CACHE;
+					__ino = __mapping->host->i_ino;
+				} else if (!__mapping) {
+					__src_type = SOURCE_USER_PAGE;
+				}
+			}
+			trace_tsgl_composition(
+				sock_i_ino(sk), __i,
+				(unsigned long)__page,
+				__page ? page_to_pfn(__page) : 0,
+				__sg->offset, __sg->length,
+				__src_type, __ino, __path);
+		}
+	}
+
 	/*
 	 * Copy of AAD from source to destination
 	 *
@@ -276,6 +308,27 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 		} else
 			/* no RX SGL present (e.g. authentication only) */
 			rsgl_src = areq->tsgl;
+	}
+
+	{
+		struct scatterlist *__sg = rsgl_src;
+		unsigned int __rem = ctx->aead_assoclen;
+		int __i = 0;
+
+		while (__rem > 0 && __sg) {
+			unsigned int __len = min_t(unsigned int, __sg->length, __rem);
+
+			trace_rsgl_copy_and_chain(
+				sock_i_ino(sk), STAGE_COPY, __i,
+				(unsigned long)sg_page(__sg),
+				sg_page(__sg) ? page_to_pfn(sg_page(__sg)) : 0,
+				__sg->offset,
+				__len,
+				COPY_TYPE_AAD, 0, "");
+			__rem -= __len;
+			__sg = sg_next(__sg);
+			__i++;
+		}
 	}
 
 	/* Initialize the crypto operation */
