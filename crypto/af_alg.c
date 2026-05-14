@@ -28,6 +28,14 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/crypto_splice.h>
 
+EXPORT_TRACEPOINT_SYMBOL_GPL(algif_aead_sendmsg_pages);
+EXPORT_TRACEPOINT_SYMBOL_GPL(splice_folio_to_pipe);
+EXPORT_TRACEPOINT_SYMBOL_GPL(splice_pipe_to_socket);
+EXPORT_TRACEPOINT_SYMBOL_GPL(tsgl_composition);
+EXPORT_TRACEPOINT_SYMBOL_GPL(rsgl_copy_and_chain);
+EXPORT_TRACEPOINT_SYMBOL_GPL(scatterwalk_write);
+EXPORT_TRACEPOINT_SYMBOL_GPL(authencesn_decrypt_step);
+
 struct alg_type_list {
 	const struct af_alg_type *type;
 	struct list_head list;
