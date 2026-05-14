@@ -103,7 +103,7 @@ void memcpy_to_sglist(struct scatterlist *sg, unsigned int start,
 			walk.offset,
 			start,
 			nbytes,
-			__is_pgc, __ino, __path);
+			__is_pgc, __ino, __path, (unsigned long)walk.sg);
 	}
 	memcpy_to_scatterwalk(&walk, buf, nbytes);
 }

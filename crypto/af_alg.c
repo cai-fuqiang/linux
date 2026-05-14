@@ -561,7 +561,7 @@ static void af_alg_link_sg(struct af_alg_sgl *sgl_prev,
 				(unsigned long)__page,
 				__page ? page_to_pfn(__page) : 0,
 				__sg->offset, __sg->length,
-				COPY_TYPE_TAG, __ino, __path);
+				COPY_TYPE_TAG, __ino, __path, (unsigned long)sgl_new->sgt.sgl);
 		}
 	}
 }
