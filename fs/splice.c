@@ -35,6 +35,7 @@
 #include <linux/gfp.h>
 #include <linux/net.h>
 #include <linux/socket.h>
+#include <net/sock.h>
 #include <linux/sched/signal.h>
 #include <trace/events/crypto_splice.h>
 
