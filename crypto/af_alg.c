@@ -25,6 +25,7 @@
 #include <keys/user-type.h>
 #include <keys/trusted-type.h>
 #include <keys/encrypted-type.h>
+#define CREATE_TRACE_POINTS
 #include <trace/events/crypto_splice.h>
 
 struct alg_type_list {
