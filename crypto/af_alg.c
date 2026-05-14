@@ -540,6 +540,29 @@ static void af_alg_link_sg(struct af_alg_sgl *sgl_prev,
 {
 	sg_unmark_end(sgl_prev->sgt.sgl + sgl_prev->sgt.nents - 1);
 	sg_chain(sgl_prev->sgt.sgl, sgl_prev->sgt.nents + 1, sgl_new->sgt.sgl);
+	if (trace_rsgl_copy_and_chain_enabled()) {
+		struct scatterlist *__sg;
+		int __j;
+
+		for_each_sg(sgl_new->sgt.sgl, __sg, sgl_new->sgt.nents, __j) {
+			struct page *__page = sg_page(__sg);
+			unsigned long __ino = 0;
+			const char *__path = "";
+
+			if (__page) {
+				struct folio *__folio = page_folio(__page);
+				struct address_space *__mapping = __folio->mapping;
+				if (__mapping && __mapping->host)
+					__ino = __mapping->host->i_ino;
+			}
+			trace_rsgl_copy_and_chain(
+				0, STAGE_CHAIN, __j,
+				(unsigned long)__page,
+				__page ? page_to_pfn(__page) : 0,
+				__sg->offset, __sg->length,
+				COPY_TYPE_TAG, __ino, __path);
+		}
+	}
 }
 
 void af_alg_free_sg(struct af_alg_sgl *sgl)
