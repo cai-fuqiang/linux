@@ -13,6 +13,12 @@
 
 #include <linux/tracepoint.h>
 
+/*
+ * Enum definitions. Guarded against redeclaration when define_trace.h
+ * re-includes this header with TRACE_HEADER_MULTI_READ.
+ */
+#ifndef TRACE_HEADER_MULTI_READ
+
 /* Source type for pages in TSGL (TP4) */
 enum {
 	SOURCE_USER_PAGE = 0,
@@ -38,6 +44,8 @@ enum {
 	SW_DIR_READ = 0,
 	SW_DIR_WRITE = 1,
 };
+
+#endif /* !TRACE_HEADER_MULTI_READ */
 
 /*
  * TP1: algif_aead_sendmsg_pages
