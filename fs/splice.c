@@ -36,6 +36,7 @@
 #include <linux/net.h>
 #include <linux/socket.h>
 #include <linux/sched/signal.h>
+#include <trace/events/crypto_splice.h>
 
 #include "internal.h"
 
@@ -862,6 +863,14 @@ ssize_t splice_to_socket(struct pipe_inode_info *pipe, struct file *out,
 			}
 
 			bvec_set_page(&bvec[bc++], buf->page, seg, buf->offset);
+			trace_splice_pipe_to_socket(
+				sock_i_ino(sock->sk),
+				tail,
+				(unsigned long)buf->page,
+				page_to_pfn(buf->page),
+				buf->offset,
+				seg,
+				bc - 1);
 			remain -= seg;
 			if (remain == 0 || bc >= ARRAY_SIZE(bvec))
 				break;
