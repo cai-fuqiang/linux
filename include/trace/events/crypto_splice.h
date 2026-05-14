@@ -181,10 +181,11 @@ TRACE_EVENT(tsgl_composition,
 		 unsigned long page_ptr, unsigned long pfn,
 		 unsigned int offset, unsigned int length,
 		 int source_type, unsigned long inode_ino,
-		 const char *filp_path),
+		 const char *filp_path, unsigned long tsgl_base),
 
 	TP_ARGS(socket_ino, sg_index, page_ptr, pfn,
-		offset, length, source_type, inode_ino, filp_path),
+		offset, length, source_type, inode_ino, filp_path,
+		tsgl_base),
 
 	TP_STRUCT__entry(
 		__field(unsigned long, socket_ino)
@@ -196,6 +197,7 @@ TRACE_EVENT(tsgl_composition,
 		__field(int, source_type)
 		__field(unsigned long, inode_ino)
 		__string(path, filp_path)
+		__field(unsigned long, tsgl_base)
 	),
 
 	TP_fast_assign(
@@ -208,9 +210,10 @@ TRACE_EVENT(tsgl_composition,
 		__entry->source_type = source_type;
 		__entry->inode_ino = inode_ino;
 		__assign_str(path);
+		__entry->tsgl_base = tsgl_base;
 	),
 
-	TP_printk("sock=%lu sg[%d] page=0x%lx pfn=0x%lx offset=%u len=%u src=%s ino=%lu path=%s",
+	TP_printk("sock=%lu sg[%d] page=0x%lx pfn=0x%lx offset=%u len=%u src=%s ino=%lu path=%s tsgl=0x%lx",
 		__entry->socket_ino, __entry->sg_index,
 		__entry->page_ptr, __entry->pfn,
 		__entry->offset, __entry->length,
@@ -218,7 +221,7 @@ TRACE_EVENT(tsgl_composition,
 			{ SOURCE_USER_PAGE, "USER" },
 			{ SOURCE_PAGE_CACHE, "PAGE_CACHE" },
 			{ SOURCE_PIPE_BUF, "PIPE_BUF" }),
-		__entry->inode_ino, __get_str(path))
+		__entry->inode_ino, __get_str(path), __entry->tsgl_base)
 );
 
 /*
@@ -232,10 +235,11 @@ TRACE_EVENT(rsgl_copy_and_chain,
 		 unsigned long page_ptr, unsigned long pfn,
 		 unsigned int offset, unsigned int length,
 		 int copy_type, unsigned long dst_inode,
-		 const char *dst_path),
+		 const char *dst_path, unsigned long sg_list_base),
 
 	TP_ARGS(socket_ino, stage, sg_index, page_ptr, pfn,
-		offset, length, copy_type, dst_inode, dst_path),
+		offset, length, copy_type, dst_inode, dst_path,
+		sg_list_base),
 
 	TP_STRUCT__entry(
 		__field(unsigned long, socket_ino)
@@ -248,6 +252,7 @@ TRACE_EVENT(rsgl_copy_and_chain,
 		__field(int, copy_type)
 		__field(unsigned long, dst_inode)
 		__string(path, dst_path)
+		__field(unsigned long, sg_list_base)
 	),
 
 	TP_fast_assign(
@@ -261,9 +266,10 @@ TRACE_EVENT(rsgl_copy_and_chain,
 		__entry->copy_type = copy_type;
 		__entry->dst_inode = dst_inode;
 		__assign_str(path);
+		__entry->sg_list_base = sg_list_base;
 	),
 
-	TP_printk("sock=%lu stage=%s sg[%d] page=0x%lx pfn=0x%lx offset=%u len=%u type=%s dst_ino=%lu dst_path=%s",
+	TP_printk("sock=%lu stage=%s sg[%d] page=0x%lx pfn=0x%lx offset=%u len=%u type=%s dst_ino=%lu dst_path=%s sglist=0x%lx",
 		__entry->socket_ino,
 		__print_symbolic(__entry->stage,
 			{ STAGE_COPY, "COPY" },
@@ -275,7 +281,8 @@ TRACE_EVENT(rsgl_copy_and_chain,
 			{ COPY_TYPE_AAD, "AAD" },
 			{ COPY_TYPE_CIPHERTEXT, "CT" },
 			{ COPY_TYPE_TAG, "TAG" }),
-		__entry->dst_inode, __get_str(path))
+		__entry->dst_inode, __get_str(path),
+		__entry->sg_list_base)
 );
 
 /*
@@ -288,10 +295,11 @@ TRACE_EVENT(scatterwalk_write,
 	TP_PROTO(unsigned long page_ptr, unsigned long pfn,
 		 unsigned int page_offset, unsigned int write_offset,
 		 unsigned int nbytes, bool is_pagecache,
-		 unsigned long inode_ino, const char *filp_path),
+		 unsigned long inode_ino, const char *filp_path,
+		 unsigned long sg_entry_ptr),
 
 	TP_ARGS(page_ptr, pfn, page_offset, write_offset, nbytes,
-		is_pagecache, inode_ino, filp_path),
+		is_pagecache, inode_ino, filp_path, sg_entry_ptr),
 
 	TP_STRUCT__entry(
 		__field(unsigned long, page_ptr)
@@ -302,6 +310,7 @@ TRACE_EVENT(scatterwalk_write,
 		__field(bool, is_pagecache)
 		__field(unsigned long, inode_ino)
 		__string(path, filp_path)
+		__field(unsigned long, sg_entry_ptr)
 	),
 
 	TP_fast_assign(
@@ -313,13 +322,15 @@ TRACE_EVENT(scatterwalk_write,
 		__entry->is_pagecache = is_pagecache;
 		__entry->inode_ino = inode_ino;
 		__assign_str(path);
+		__entry->sg_entry_ptr = sg_entry_ptr;
 	),
 
-	TP_printk("page=0x%lx pfn=0x%lx page_off=%u write_off=%u nbytes=%u is_pgcache=%d ino=%lu path=%s",
+	TP_printk("page=0x%lx pfn=0x%lx page_off=%u write_off=%u nbytes=%u is_pgcache=%d ino=%lu path=%s sg=0x%lx",
 		__entry->page_ptr, __entry->pfn,
 		__entry->page_offset, __entry->write_offset,
 		__entry->nbytes, __entry->is_pagecache,
-		__entry->inode_ino, __get_str(path))
+		__entry->inode_ino, __get_str(path),
+		__entry->sg_entry_ptr)
 );
 
 /*
