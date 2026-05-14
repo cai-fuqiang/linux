@@ -54,6 +54,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
+#include <trace/events/crypto_splice.h>
 
 /*
  * FIXME: remove all knowledge of the buffer layer from the core VM
@@ -2919,6 +2920,16 @@ size_t splice_folio_into_pipe(struct pipe_inode_info *pipe,
 			.len	= part,
 		};
 		folio_get(folio);
+		trace_splice_folio_to_pipe(
+			folio->mapping && folio->mapping->host ?
+				folio->mapping->host->i_ino : 0,
+			"",
+			(unsigned long)page,
+			page_to_pfn(page),
+			pipe->head,
+			offset,
+			part,
+			folio_ref_count(folio));
 		pipe->head++;
 		page++;
 		spliced += part;
