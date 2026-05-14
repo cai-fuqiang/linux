@@ -53,9 +53,9 @@
 #include <asm/tlbflush.h>
 #include "internal.h"
 
+#include <trace/events/crypto_splice.h>
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
-#include <trace/events/crypto_splice.h>
 
 /*
  * FIXME: remove all knowledge of the buffer layer from the core VM
