@@ -85,25 +85,14 @@ void memcpy_to_sglist(struct scatterlist *sg, unsigned int start,
 	scatterwalk_start_at_pos(&walk, sg, start);
 	if (trace_scatterwalk_write_enabled()) {
 		struct page *__page = sg_page(walk.sg);
-		bool __is_pgc = false;
-		unsigned long __ino = 0;
-		const char *__path = "";
 
-		if (__page) {
-			struct folio *__folio = page_folio(__page);
-			struct address_space *__mapping = __folio->mapping;
-			if (__mapping && __mapping->host) {
-				__is_pgc = true;
-				__ino = __mapping->host->i_ino;
-			}
-		}
 		trace_scatterwalk_write(
 			(unsigned long)__page,
 			__page ? page_to_pfn(__page) : 0,
 			walk.offset,
 			start,
 			nbytes,
-			__is_pgc, __ino, __path, (unsigned long)walk.sg);
+			false, 0, "", (unsigned long)walk.sg);
 	}
 	memcpy_to_scatterwalk(&walk, buf, nbytes);
 }
