@@ -199,7 +199,8 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 				(unsigned long)__page,
 				__page ? page_to_pfn(__page) : 0,
 				__sg->offset, __sg->length,
-				__src_type, __ino, __path);
+				__src_type, __ino, __path,
+				(unsigned long)areq->tsgl);
 		}
 	}
 
@@ -231,7 +232,7 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 				sg_page(__sg) ? page_to_pfn(sg_page(__sg)) : 0,
 				__sg->offset,
 				__len,
-				COPY_TYPE_AAD, 0, "");
+				COPY_TYPE_AAD, 0, "", (unsigned long)rsgl_src);
 			__rem -= __len;
 			__sg = sg_next(__sg);
 			__i++;
