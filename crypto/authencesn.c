@@ -18,6 +18,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/rtnetlink.h>
+#include <trace/events/crypto_splice.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
@@ -275,21 +276,81 @@ static int crypto_authenc_esn_decrypt(struct aead_request *req)
 	scatterwalk_map_and_copy(ihash, req->src, assoclen + cryptlen,
 				 authsize, 0);
 
+	trace_authencesn_decrypt_step(
+		src == dst, assoclen, cryptlen, authsize,
+		0, "read_ihash",
+		assoclen + cryptlen, authsize,
+		SW_DIR_READ,
+		(unsigned long)sg_page(req->src),
+		sg_page(req->src) ? page_to_pfn(sg_page(req->src)) : 0);
+
 	/* Move high-order bits of sequence number to the end. */
 	scatterwalk_map_and_copy(tmp, src, 0, 8, 0);
+
+	trace_authencesn_decrypt_step(
+		src == dst, assoclen, cryptlen, authsize,
+		1, "read_aad",
+		0, 8,
+		SW_DIR_READ,
+		(unsigned long)sg_page(src),
+		sg_page(src) ? page_to_pfn(sg_page(src)) : 0);
+
 	if (src == dst) {
 		scatterwalk_map_and_copy(tmp, dst, 4, 4, 1);
+
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			2, "write_seqno_hi",
+			4, 4,
+			SW_DIR_WRITE,
+			(unsigned long)sg_page(dst),
+			sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
+
 		scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen, 4, 1);
+
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			3, "write_seqno_lo",
+			assoclen + cryptlen, 4,
+			SW_DIR_WRITE,
+			(unsigned long)sg_page(dst),
+			sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
+
 		dst = scatterwalk_ffwd(areq_ctx->dst, dst, 4);
 	} else {
 		scatterwalk_map_and_copy(tmp, dst, 0, 4, 1);
+
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			2, "write_seqno_hi_alt",
+			0, 4,
+			SW_DIR_WRITE,
+			(unsigned long)sg_page(dst),
+			sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
+
 		scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen - 4, 4, 1);
+
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			3, "write_seqno_lo_alt",
+			assoclen + cryptlen - 4, 4,
+			SW_DIR_WRITE,
+			(unsigned long)sg_page(dst),
+			sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
 
 		src = scatterwalk_ffwd(areq_ctx->src, src, 8);
 		dst = scatterwalk_ffwd(areq_ctx->dst, dst, 4);
 		memcpy_sglist(dst, src, assoclen + cryptlen - 8);
 		dst = req->dst;
 	}
+
+	trace_authencesn_decrypt_step(
+		src == dst, assoclen, cryptlen, authsize,
+		4, "hmac_verify",
+		4, assoclen + cryptlen,
+		SW_DIR_READ,
+		(unsigned long)sg_page(dst),
+		sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
 
 	ahash_request_set_tfm(ahreq, auth);
 	ahash_request_set_crypt(ahreq, dst, ohash, assoclen + cryptlen);
