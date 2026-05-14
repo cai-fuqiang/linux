@@ -25,6 +25,7 @@
 #include <keys/user-type.h>
 #include <keys/trusted-type.h>
 #include <keys/encrypted-type.h>
+#include <trace/events/crypto_splice.h>
 
 struct alg_type_list {
 	const struct af_alg_type *type;
@@ -1026,6 +1027,8 @@ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
 				.orig_nents	= sgl->cur,
 			};
 
+			int __tp_old_cur = sgl->cur;
+
 			plen = extract_iter_to_sg(&msg->msg_iter, len, &sgtable,
 						  MAX_SGL_ENTS - sgl->cur, 0);
 			if (plen < 0) {
@@ -1035,6 +1038,24 @@ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
 
 			for (; sgl->cur < sgtable.nents; sgl->cur++)
 				get_page(sg_page(&sg[sgl->cur]));
+
+			{
+				int __idx;
+				for (__idx = __tp_old_cur; __idx < sgl->cur; __idx++) {
+					struct page *__page = sg_page(&sg[__idx]);
+					trace_algif_aead_sendmsg_pages(
+						sock_i_ino(sk),
+						0,
+						ctx->aead_assoclen,
+						__idx,
+						(unsigned long)__page,
+						page_to_pfn(__page),
+						sg[__idx].offset,
+						sg[__idx].length,
+						false);
+				}
+			}
+
 			len -= plen;
 			ctx->used += plen;
 			copied += plen;
