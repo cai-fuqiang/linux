@@ -288,13 +288,22 @@ static int crypto_authenc_esn_decrypt(struct aead_request *req)
 	scatterwalk_map_and_copy(ihash, req->src, assoclen + cryptlen,
 				 authsize, 0);
 
-	trace_authencesn_decrypt_step(
-		src == dst, assoclen, cryptlen, authsize,
-		0, "read_ihash",
-		assoclen + cryptlen, authsize,
-		SW_DIR_READ,
-		(unsigned long)sg_page(req->src),
-		sg_page(req->src) ? page_to_pfn(sg_page(req->src)) : 0);
+	{
+		struct scatterlist *__sg = req->src;
+		unsigned int __pos = assoclen + cryptlen;
+
+		while (__sg && __pos >= __sg->length) {
+			__pos -= __sg->length;
+			__sg = sg_next(__sg);
+		}
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			0, "read_ihash",
+			assoclen + cryptlen, authsize,
+			SW_DIR_READ,
+			(unsigned long)(__sg ? sg_page(__sg) : 0),
+			__sg ? page_to_pfn(sg_page(__sg)) : 0);
+	}
 
 	if (!authsize)
 		goto tail;
@@ -312,34 +321,61 @@ static int crypto_authenc_esn_decrypt(struct aead_request *req)
 
 	scatterwalk_map_and_copy(tmp, dst, 4, 4, 1);
 
-	trace_authencesn_decrypt_step(
-		src == dst, assoclen, cryptlen, authsize,
-		2, "write_seqno_hi",
-		4, 4,
-		SW_DIR_WRITE,
-		(unsigned long)sg_page(dst),
-		sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
+	{
+		struct scatterlist *__sg = dst;
+		unsigned int __pos = 4;
+
+		while (__sg && __pos >= __sg->length) {
+			__pos -= __sg->length;
+			__sg = sg_next(__sg);
+		}
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			2, "write_seqno_hi",
+			4, 4,
+			SW_DIR_WRITE,
+			(unsigned long)(__sg ? sg_page(__sg) : 0),
+			__sg ? page_to_pfn(sg_page(__sg)) : 0);
+	}
 
 	scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen, 4, 1);
 
-	trace_authencesn_decrypt_step(
-		src == dst, assoclen, cryptlen, authsize,
-		3, "write_seqno_lo",
-		assoclen + cryptlen, 4,
-		SW_DIR_WRITE,
-		(unsigned long)sg_page(dst),
-		sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
+	{
+		struct scatterlist *__sg = dst;
+		unsigned int __pos = assoclen + cryptlen;
+
+		while (__sg && __pos >= __sg->length) {
+			__pos -= __sg->length;
+			__sg = sg_next(__sg);
+		}
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			3, "write_seqno_lo",
+			assoclen + cryptlen, 4,
+			SW_DIR_WRITE,
+			(unsigned long)(__sg ? sg_page(__sg) : 0),
+			__sg ? page_to_pfn(sg_page(__sg)) : 0);
+	}
 
 	sg_init_table(areq_ctx->dst, 2);
 	dst = scatterwalk_ffwd(areq_ctx->dst, dst, 4);
 
-	trace_authencesn_decrypt_step(
-		src == dst, assoclen, cryptlen, authsize,
-		4, "hmac_verify",
-		4, assoclen + cryptlen,
-		SW_DIR_READ,
-		(unsigned long)sg_page(dst),
-		sg_page(dst) ? page_to_pfn(sg_page(dst)) : 0);
+	{
+		struct scatterlist *__sg = dst;
+		unsigned int __pos = assoclen + cryptlen;
+
+		while (__sg && __pos >= __sg->length) {
+			__pos -= __sg->length;
+			__sg = sg_next(__sg);
+		}
+		trace_authencesn_decrypt_step(
+			src == dst, assoclen, cryptlen, authsize,
+			4, "hmac_verify",
+			4, assoclen + cryptlen,
+			SW_DIR_READ,
+			(unsigned long)(__sg ? sg_page(__sg) : 0),
+			__sg ? page_to_pfn(sg_page(__sg)) : 0);
+	}
 
 	ahash_request_set_tfm(ahreq, auth);
 	ahash_request_set_crypt(ahreq, dst, ohash, assoclen + cryptlen);
