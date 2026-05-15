@@ -305,24 +305,36 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 			struct scatterlist *sg = sgl_prev->sgt.sgl;
 			struct scatterlist *sg_last = sg + sgl_prev->sgt.nents - 1;
 
-			/* BEFORE chain: last rsgl entry (page cache page) */
-			trace_algif_aead_sg_chain(
-				sock_i_ino(sk), 0, "before_chain",
-				sgl_prev->sgt.nents, usedpages,
-				(unsigned long)sg_page(sg_last),
-				sg_page(sg_last) ? page_to_pfn(sg_page(sg_last)) : 0,
-				sg_last->offset, sg_last->length);
+			/* BEFORE chain: walk entire rsgl */
+			{
+				struct scatterlist *__sg;
+				int __i = 0;
+
+				for (__sg = sg; __sg; __sg = sg_next(__sg), __i++)
+					trace_algif_aead_sg_chain(
+						sock_i_ino(sk), 0, "before_chain",
+						__i, usedpages,
+						(unsigned long)sg_page(__sg),
+						sg_page(__sg) ? page_to_pfn(sg_page(__sg)) : 0,
+						__sg->offset, __sg->length);
+			}
 
 			sg_unmark_end(sg_last);
 			sg_chain(sg, sgl_prev->sgt.nents + 1, areq->tsgl);
 
-			/* AFTER chain: first tsgl entry (tag page chained in) */
-			trace_algif_aead_sg_chain(
-				sock_i_ino(sk), 1, "after_chain",
-				sgl_prev->sgt.nents + 1, usedpages,
-				(unsigned long)sg_page(areq->tsgl),
-				sg_page(areq->tsgl) ? page_to_pfn(sg_page(areq->tsgl)) : 0,
-				areq->tsgl->offset, areq->tsgl->length);
+			/* AFTER chain: walk full merged chain (rsgl + tsgl) */
+			{
+				struct scatterlist *__sg;
+				int __i = 0;
+
+				for (__sg = sg; __sg; __sg = sg_next(__sg), __i++)
+					trace_algif_aead_sg_chain(
+						sock_i_ino(sk), 1, "after_chain",
+						__i, usedpages,
+						(unsigned long)sg_page(__sg),
+						sg_page(__sg) ? page_to_pfn(sg_page(__sg)) : 0,
+						__sg->offset, __sg->length);
+			}
 		} else
 			/* no RX SGL present (e.g. authentication only) */
 			rsgl_src = areq->tsgl;
