@@ -438,6 +438,58 @@ TRACE_EVENT(authencesn_seqno_copy,
 		__entry->seqno_hi, __entry->seqno_lo)
 );
 
+/*
+ * TP9: algif_aead_sg_chain
+ *
+ * Fires twice around sg_chain() in _aead_recvmsg() decrypt path:
+ *   side=0 (BEFORE): last rsgl sg entry — the page cache page being chained onto
+ *   side=1 (AFTER):  first tsgl sg entry — the tag page being chained in
+ *
+ * This is the CVE trigger site: areq->tsgl (tag) is sg_chain'd after RSGL,
+ * making the combined dst sglist span page cache pages followed by tag data.
+ * scatterwalk_map_and_copy at assoclen+cryptlen then writes into page cache.
+ */
+TRACE_EVENT(algif_aead_sg_chain,
+
+	TP_PROTO(unsigned long socket_ino, int side, const char *side_name,
+		 int nents, unsigned int usedpages,
+		 unsigned long page_ptr, unsigned long pfn,
+		 unsigned int offset, unsigned int length),
+
+	TP_ARGS(socket_ino, side, side_name, nents, usedpages,
+		page_ptr, pfn, offset, length),
+
+	TP_STRUCT__entry(
+		__field(unsigned long, socket_ino)
+		__field(int, side)
+		__string(side_name, side_name)
+		__field(int, nents)
+		__field(unsigned int, usedpages)
+		__field(unsigned long, page_ptr)
+		__field(unsigned long, pfn)
+		__field(unsigned int, offset)
+		__field(unsigned int, length)
+	),
+
+	TP_fast_assign(
+		__entry->socket_ino = socket_ino;
+		__entry->side = side;
+		__assign_str(side_name);
+		__entry->nents = nents;
+		__entry->usedpages = usedpages;
+		__entry->page_ptr = page_ptr;
+		__entry->pfn = pfn;
+		__entry->offset = offset;
+		__entry->length = length;
+	),
+
+	TP_printk("sock=%lu side=%s nents=%d usedpages=%u page=0x%lx pfn=0x%lx offset=%u len=%u",
+		__entry->socket_ino, __get_str(side_name),
+		__entry->nents, __entry->usedpages,
+		__entry->page_ptr, __entry->pfn,
+		__entry->offset, __entry->length)
+);
+
 #endif /* _TRACE_CRYPTO_SPLICE_H */
 
 /* This part must be outside the include guard */
