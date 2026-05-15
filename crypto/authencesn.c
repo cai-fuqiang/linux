@@ -233,8 +233,14 @@ static int crypto_authenc_esn_decrypt_tail(struct aead_request *req,
 
 	/* Move high-order bits of sequence number back. */
 	scatterwalk_map_and_copy(tmp, dst, 4, 4, 0);
+	trace_authencesn_seqno_copy(0, "read_seqno_hi",
+				    assoclen, cryptlen, tmp[0], 0);
 	scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen, 4, 0);
+	trace_authencesn_seqno_copy(1, "read_seqno_lo",
+				    assoclen, cryptlen, tmp[0], tmp[1]);
 	scatterwalk_map_and_copy(tmp, dst, 0, 8, 1);
+	trace_authencesn_seqno_copy(2, "write_seqno_back",
+				    assoclen, cryptlen, tmp[0], tmp[1]);
 
 	if (crypto_memneq(ihash, ohash, authsize))
 		return -EBADMSG;
@@ -243,6 +249,7 @@ decrypt:
 
 	sg_init_table(areq_ctx->dst, 2);
 	dst = scatterwalk_ffwd(areq_ctx->dst, dst, assoclen);
+
 
 	skcipher_request_set_tfm(skreq, ctx->enc);
 	skcipher_request_set_callback(skreq, flags,

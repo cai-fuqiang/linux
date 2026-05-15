@@ -398,6 +398,46 @@ TRACE_EVENT(authencesn_decrypt_step,
 		__entry->page_ptr, __entry->pfn)
 );
 
+/*
+ * TP8: authencesn_seqno_copy
+ *
+ * Traces the seqno hi/lo read and writeback in crypto_authenc_esn_decrypt_tail().
+ * step=0: after reading seqno_hi from dst[4]
+ * step=1: after reading seqno_lo from dst[assoclen+cryptlen]
+ * step=2: after writing 8-byte seqno back to dst[0]
+ */
+TRACE_EVENT(authencesn_seqno_copy,
+
+	TP_PROTO(int step, const char *step_name,
+		 unsigned int assoclen, unsigned int cryptlen,
+		 u32 seqno_hi, u32 seqno_lo),
+
+	TP_ARGS(step, step_name, assoclen, cryptlen, seqno_hi, seqno_lo),
+
+	TP_STRUCT__entry(
+		__field(int, step)
+		__string(name, step_name)
+		__field(unsigned int, assoclen)
+		__field(unsigned int, cryptlen)
+		__field(u32, seqno_hi)
+		__field(u32, seqno_lo)
+	),
+
+	TP_fast_assign(
+		__entry->step = step;
+		__assign_str(name);
+		__entry->assoclen = assoclen;
+		__entry->cryptlen = cryptlen;
+		__entry->seqno_hi = seqno_hi;
+		__entry->seqno_lo = seqno_lo;
+	),
+
+	TP_printk("step=%d name=%s assoclen=%u cryptlen=%u seqno_hi=0x%08x seqno_lo=0x%08x",
+		__entry->step, __get_str(name),
+		__entry->assoclen, __entry->cryptlen,
+		__entry->seqno_hi, __entry->seqno_lo)
+);
+
 #endif /* _TRACE_CRYPTO_SPLICE_H */
 
 /* This part must be outside the include guard */
