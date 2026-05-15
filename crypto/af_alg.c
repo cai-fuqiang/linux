@@ -1141,6 +1141,15 @@ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
 				ctx->used += plen;
 				copied += plen;
 				size -= plen;
+				trace_algif_aead_sendmsg_pages(
+					sock_i_ino(sk), 0,
+					ctx->aead_assoclen,
+					i,
+					(unsigned long)sg_page(sg + i),
+					page_to_pfn(sg_page(sg + i)),
+					sg[i].offset,
+					sg[i].length,
+					true);
 				sgl->cur++;
 			} while (len && sgl->cur < MAX_SGL_ENTS);
 
