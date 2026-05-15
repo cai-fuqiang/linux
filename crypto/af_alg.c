@@ -35,6 +35,8 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(tsgl_composition);
 EXPORT_TRACEPOINT_SYMBOL_GPL(rsgl_copy_and_chain);
 EXPORT_TRACEPOINT_SYMBOL_GPL(scatterwalk_write);
 EXPORT_TRACEPOINT_SYMBOL_GPL(authencesn_decrypt_step);
+EXPORT_TRACEPOINT_SYMBOL_GPL(authencesn_seqno_copy);
+EXPORT_TRACEPOINT_SYMBOL_GPL(algif_aead_sg_chain);
 
 struct alg_type_list {
 	const struct af_alg_type *type;
