@@ -1046,6 +1046,16 @@ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
 			ctx->merge = (sg->offset + sg->length) &
 				     (PAGE_SIZE - 1);
 
+			trace_algif_aead_sendmsg_pages(
+				sock_i_ino(sk), 0,
+				ctx->aead_assoclen,
+				sgl->cur - 1,
+				(unsigned long)sg_page(sg),
+				page_to_pfn(sg_page(sg)),
+				sg->offset,
+				sg->length,
+				true);
+
 			ctx->used += len;
 			copied += len;
 			size -= len;
