@@ -1,0 +1,2 @@
+# Build: make -C /lib/modules/$(uname -r)/build M=$PWD -f Makefile.cve31431 modules
+obj-m += cve-31431-mitigate.o
